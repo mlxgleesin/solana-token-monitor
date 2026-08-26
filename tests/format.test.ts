@@ -67,6 +67,44 @@ test("转入销毁地址识别为 🔥", () => {
   assert.ok(msg.includes("销毁"), "销毁说明");
 });
 
+test("结构化字段卡：含发送/接收/数量/分析字段与收尾符", () => {
+  const msg = formatAlerts([ev({ to: "BinanceHotWallet11111111111111111111111111" })], {
+    tokenAddress: "MintXYZ",
+    priceUsd: null,
+    cexAddresses: CEX,
+  });
+  for (const field of ["├ 发送", "├ 接收", "├ 数量", "├ 分析", "└ "]) {
+    assert.ok(msg.includes(field), `缺少字段 ${field}`);
+  }
+});
+
+test("多个块之间有分割线", () => {
+  const msg = formatAlerts(
+    [ev(), ev({ to: "BinanceHotWallet11111111111111111111111111", signature: "sigCEX" })],
+    { tokenAddress: "MintXYZ", priceUsd: null, cexAddresses: CEX },
+  );
+  const parts = msg.split("━━");
+  assert.ok(parts.length >= 3, "头部与两个块之间应有分割线");
+});
+
+test("CEX 转出占比小 → 分析提示试探性出货；占比大 → 提示清仓风险", () => {
+  const cexTo = "BinanceHotWallet11111111111111111111111111";
+  const probe = formatAlerts([ev({ to: cexTo, amount: 999_999 })], {
+    tokenAddress: "MintXYZ",
+    priceUsd: null,
+    cexAddresses: CEX,
+    senderBalances: { WhaleAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA: 707_990_018 },
+  });
+  assert.ok(probe.includes("试探"), "0.1% 占比应判为试探性出货");
+  const dump = formatAlerts([ev({ to: cexTo, amount: 500_000_000 })], {
+    tokenAddress: "MintXYZ",
+    priceUsd: null,
+    cexAddresses: CEX,
+    senderBalances: { WhaleAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA: 100_000_000 },
+  });
+  assert.ok(dump.includes("清仓"), "83% 占比应提示清仓风险");
+});
+
 test("大户收到大额 SOL → 💰 弹药到位告警，排在 CEX 之后、普通异动之前", () => {
   const events = [
     ev(),

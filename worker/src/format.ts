@@ -36,14 +36,36 @@ function fmtUsd(n: number): string {
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 const acct = (a: string) => `<a href="https://solscan.io/account/${a}">${short(a)}</a>`;
-const txLink = (s: string) => `<a href="https://solscan.io/tx/${s}">TX↗</a>`;
+const txLink = (s: string, label = "TX↗") => `<a href="https://solscan.io/tx/${s}">${label}</a>`;
 const isBurn = (a: string) => a.startsWith("1nc1nerator") || /burn/i.test(a);
+
+const SEPARATOR = "━━━━━━━━━━━━";
+
+/** 结构化字段卡：标题 + ├ 字段行 + └ 收尾行 */
+function card(title: string, fields: [string, string][], last: string): string {
+  return [title, ...fields.map(([k, v]) => `├ ${k}　${v}`), `└ ${last}`].join("\n");
+}
+
+/** 按转出占比给出货程度的定性分析 */
+function sellAnalysis(amount: number, balanceAfter: number | null | undefined): string {
+  if (typeof balanceAfter !== "number") {
+    return "大户资金进入交易所通常是出货前置动作，无法获取其余额，建议人工核对持仓变化";
+  }
+  const pct = (amount / (amount + balanceAfter)) * 100;
+  if (pct < 5) {
+    return `仅动用持仓 ${pct < 0.1 ? "<0.1" : pct.toFixed(1)}%，更像试探性出货；若出现连续充值或余额骤降，警惕转为正式出货`;
+  }
+  if (pct < 30) {
+    return `转出占持仓 ${pct.toFixed(0)}%，属明显减仓动作，密切关注后续充值节奏`;
+  }
+  return `转出占持仓 ${pct.toFixed(0)}%，大幅出货，清仓风险高，注意价格端联动反应`;
+}
 
 export function formatAlerts(events: TransferEvent[], ctx: FormatContext): string {
   const usd = (amt: number) => (ctx.priceUsd == null ? "" : ` ≈ ${fmtUsd(amt * ctx.priceUsd)}`);
-  const balanceLine = (from: string) => {
+  const balanceField = (from: string): [string, string][] => {
     const bal = ctx.senderBalances?.[from];
-    return typeof bal === "number" ? `\n转出后余额 ${fmtAmount(bal)} 枚` : "";
+    return typeof bal === "number" ? [["余额", `${fmtAmount(bal)} 枚（转出后）`]] : [];
   };
 
   const funding = events.filter((e) => e.asset);
@@ -60,57 +82,98 @@ export function formatAlerts(events: TransferEvent[], ctx: FormatContext): strin
 
   for (const e of cex) {
     blocks.push(
-      `🚨🚨 <b>大户向交易所转币 — 出货警报</b>\n` +
-        `${acct(e.from)} ➜ <b>${ctx.cexAddresses[e.to]}</b>\n` +
-        `${fmtAmount(e.amount)} 枚${usd(e.amount)} · ${txLink(e.signature)}` +
-        balanceLine(e.from),
+      card(
+        "🚨🚨 <b>出货警报 · 转入交易所</b>",
+        [
+          ["发送", acct(e.from)],
+          ["接收", `<b>${ctx.cexAddresses[e.to]}</b>`],
+          ["数量", `${fmtAmount(e.amount)} 枚${usd(e.amount)}`],
+          ...balanceField(e.from),
+          ["分析", sellAnalysis(e.amount, ctx.senderBalances?.[e.from])],
+        ],
+        txLink(e.signature, "查看交易 ↗"),
+      ),
     );
   }
 
   for (const e of funding) {
     blocks.push(
-      `💰 <b>弹药到位 — 大户收到大额资金</b>\n` +
-        `${acct(e.from)} ➜ ${acct(e.to)}\n` +
-        `${fmtAmount(e.amount)} ${e.asset} · ${txLink(e.signature)}\n` +
-        `资金到位常见于扫货/拉盘前，关注该地址后续买入动作`,
+      card(
+        "💰 <b>弹药到位</b>",
+        [
+          ["来源", acct(e.from)],
+          ["流入", acct(e.to)],
+          ["数量", `${fmtAmount(e.amount)} ${e.asset}`],
+          ["分析", "大户收到大额资金，常见于扫货或拉盘前的资金准备，关注该地址后续是否买入"],
+        ],
+        txLink(e.signature, "查看交易 ↗"),
+      ),
     );
   }
 
   for (const e of burns) {
     blocks.push(
-      `🔥 <b>转入销毁地址</b>\n` +
-        `${acct(e.from)} ➜ ${acct(e.to)}\n` +
-        `${fmtAmount(e.amount)} 枚${usd(e.amount)} · ${txLink(e.signature)}`,
+      card(
+        "🔥 <b>转入销毁地址</b>",
+        [
+          ["发送", acct(e.from)],
+          ["接收", acct(e.to)],
+          ["数量", `${fmtAmount(e.amount)} 枚${usd(e.amount)}`],
+          ["分析", "销毁减少流通供给，一般视为利好；建议确认接收地址确为无私钥的销毁地址"],
+        ],
+        txLink(e.signature, "查看交易 ↗"),
+      ),
     );
   }
 
+  const circled = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"];
   for (const [from, evs] of bySender) {
     if (evs.length >= 2) {
       const total = evs.reduce((s, e) => s + e.amount, 0);
       blocks.push(
-        `⚠️ <b>分散转出 ×${evs.length}</b>（疑似分仓或交易所批量充值）\n` +
-          `${acct(from)} ➜ ${evs.length} 个地址 · 共 ${fmtAmount(total)} 枚${usd(total)}\n` +
-          evs
-            .map((e) => `· ${acct(e.to)} — ${fmtAmount(e.amount)} 枚 · ${txLink(e.signature)}`)
-            .join("\n") +
-          balanceLine(from),
+        card(
+          `⚠️ <b>分散转出 ×${evs.length}</b>`,
+          [
+            ["发送", acct(from)],
+            ["合计", `${fmtAmount(total)} 枚${usd(total)} → ${evs.length} 个地址`],
+            ...evs.map(
+              (e, i): [string, string] => [
+                circled[i] ?? `${i + 1}.`,
+                `${acct(e.to)} — ${fmtAmount(e.amount)} 枚 · ${txLink(e.signature)}`,
+              ],
+            ),
+            ...balanceField(from),
+            [
+              "分析",
+              "小额多地址分散常见于分仓、测试转账或交易所批量充值前的准备；接收方若是新钱包需持续跟踪",
+            ],
+          ],
+          txLink(evs[0].signature, "查看首笔交易 ↗"),
+        ),
       );
     } else {
       const e = evs[0];
       blocks.push(
-        `⚠️ <b>大户转出</b>\n` +
-          `${acct(e.from)} ➜ ${acct(e.to)}\n` +
-          `${fmtAmount(e.amount)} 枚${usd(e.amount)} · ${txLink(e.signature)}` +
-          balanceLine(e.from),
+        card(
+          "⚠️ <b>大户转出</b>",
+          [
+            ["发送", acct(e.from)],
+            ["接收", acct(e.to)],
+            ["数量", `${fmtAmount(e.amount)} 枚${usd(e.amount)}`],
+            ...balanceField(e.from),
+            [
+              "分析",
+              "接收方可能是交易所个人充值地址（随后会归集）或新钱包，点击地址跟踪后续去向",
+            ],
+          ],
+          txLink(e.signature, "查看交易 ↗"),
+        ),
       );
     }
   }
 
   const priceNote = ctx.priceUsd == null ? "" : ` · 价格 $${ctx.priceUsd}`;
   const header = `🐋 <b>大户异动</b> <code>${short(ctx.tokenAddress)}</code>${priceNote}`;
-  const footer = rest.length
-    ? "💡 陌生接收地址可能是 CEX 个人充值地址（随后会归集），点地址链接可追去向"
-    : "";
 
-  return [header, ...blocks, footer].filter(Boolean).join("\n\n");
+  return [header, ...blocks].join(`\n\n${SEPARATOR}\n\n`);
 }

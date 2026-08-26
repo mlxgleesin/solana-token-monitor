@@ -133,7 +133,7 @@ async function main() {
   if (pending.length) {
     const header = `<b>🎯 代币监控告警</b>\n<code>${TOKEN_ADDRESS.slice(0, 8)}...</code> | ${pair.dexId}\n价格 $${pair.priceUsd} | LP ${fmt(liq)}\n${pair.url}\n\n`;
     // 发送失败会抛错 → 本轮 state 不保存，下一轮重新评估重发
-    await sendTelegram(header + pending.map((p) => p.text).join("\n\n"));
+    await sendTelegram(header + pending.map((p) => p.text).join("\n\n━━━━━━━━━━━━\n\n"));
     for (const p of pending) markAlerted(state, p.key, now);
     console.log(`已发送 ${pending.length} 条告警`);
   } else {
