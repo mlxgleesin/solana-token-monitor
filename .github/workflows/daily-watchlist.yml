@@ -28,3 +28,4 @@ jobs:
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
           HELIUS_WEBHOOK_ID: ${{ secrets.HELIUS_WEBHOOK_ID }}
         run: npm run update-watchlist
+# 注：workflow 索引依赖 push 事件，本注释用于触发注册
