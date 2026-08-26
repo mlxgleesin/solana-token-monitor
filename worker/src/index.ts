@@ -6,6 +6,8 @@
 // Helius webhook URL 填：https://<worker域名>/hook/<WEBHOOK_SECRET>
 // ============================================================
 
+import { formatAlerts, type TransferEvent } from "./format.js";
+
 export interface Env {
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_CHAT_ID: string;
@@ -13,6 +15,64 @@ export interface Env {
   WEBHOOK_SECRET: string;
   /** 监控的代币 mint 地址 */
   TOKEN_ADDRESS: string;
+}
+
+// ---------- 告警富化（失败一律降级为 null，不阻塞告警发送） ----------
+
+let priceCache: { price: number; ts: number } | null = null;
+
+/** 从 DexScreener 取最新价格（免 key），60s 内存缓存 */
+async function fetchPrice(mint: string): Promise<number | null> {
+  if (priceCache && Date.now() - priceCache.ts < 60_000) return priceCache.price;
+  try {
+    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
+    if (!res.ok) return priceCache?.price ?? null;
+    const data = (await res.json()) as {
+      pairs: { priceUsd?: string; liquidity?: { usd?: number } }[] | null;
+    };
+    const best = (data.pairs ?? []).sort(
+      (a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0),
+    )[0];
+    const price = best?.priceUsd ? Number(best.priceUsd) : null;
+    if (price) priceCache = { price, ts: Date.now() };
+    return price;
+  } catch {
+    return priceCache?.price ?? null;
+  }
+}
+
+interface TokenAccountsResp {
+  result?: {
+    value?: {
+      account?: { data?: { parsed?: { info?: { tokenAmount?: { uiAmount?: number | null } } } } };
+    }[];
+  };
+}
+
+/** 查发送方当前代币余额（公共 RPC，近似值） */
+async function fetchSenderBalance(owner: string, mint: string): Promise<number | null> {
+  try {
+    const res = await fetch("https://api.mainnet-beta.solana.com", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getTokenAccountsByOwner",
+        params: [owner, { mint }, { encoding: "jsonParsed" }],
+      }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as TokenAccountsResp;
+    const accounts = data.result?.value;
+    if (!accounts?.length) return null;
+    return accounts.reduce(
+      (s, a) => s + (a.account?.data?.parsed?.info?.tokenAmount?.uiAmount ?? 0),
+      0,
+    );
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -102,8 +162,6 @@ async function sendTelegram(env: Env, text: string): Promise<boolean> {
   return true;
 }
 
-const short = (a: string) => `${a.slice(0, 4)}..${a.slice(-4)}`;
-
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -118,35 +176,36 @@ export default {
       return new Response("bad json", { status: 400 });
     }
 
-    const lines: string[] = [];
+    const events: TransferEvent[] = [];
     for (const tx of txs) {
       for (const t of tx.tokenTransfers ?? []) {
         // 只关心被监控代币本身的转移；SOL/USDC 出入也可放开注释一并监控
         if (env.TOKEN_ADDRESS && t.mint !== env.TOKEN_ADDRESS) continue;
-
-        const amount = (t.tokenAmount ?? 0).toLocaleString();
-        const cexLabel = CEX_ADDRESSES[t.toUserAccount];
-        if (cexLabel) {
-          // 最高级别：大户向 CEX 充值 = 准备出货
-          lines.push(
-            `🚨🚨 <b>大户向交易所转币</b>\n` +
-              `${short(t.fromUserAccount)} → <b>${cexLabel}</b>\n` +
-              `数量: ${amount}\n` +
-              `<a href="https://solscan.io/tx/${tx.signature}">查看交易</a>`,
-          );
-        } else {
-          lines.push(
-            `⚠️ <b>监控地址异动</b>\n` +
-              `${short(t.fromUserAccount)} → ${short(t.toUserAccount)}\n` +
-              `数量: ${amount}\n` +
-              `<a href="https://solscan.io/tx/${tx.signature}">查看交易</a>`,
-          );
-        }
+        events.push({
+          signature: tx.signature,
+          from: t.fromUserAccount,
+          to: t.toUserAccount,
+          amount: t.tokenAmount ?? 0,
+        });
       }
     }
 
-    if (lines.length) {
-      const ok = await sendTelegram(env, lines.join("\n\n"));
+    if (events.length) {
+      // 富化：价格 + 各发送方当前余额（并发查询，失败降级为省略）
+      const senders = [...new Set(events.map((e) => e.from))];
+      const [priceUsd, ...balances] = await Promise.all([
+        fetchPrice(env.TOKEN_ADDRESS),
+        ...senders.map((s) => fetchSenderBalance(s, env.TOKEN_ADDRESS)),
+      ]);
+      const senderBalances = Object.fromEntries(senders.map((s, i) => [s, balances[i]]));
+
+      const msg = formatAlerts(events, {
+        tokenAddress: env.TOKEN_ADDRESS,
+        priceUsd,
+        cexAddresses: CEX_ADDRESSES,
+        senderBalances,
+      });
+      const ok = await sendTelegram(env, msg);
       // 非 2xx 会让 Helius 重试投递，宁可重复告警也不静默丢失
       if (!ok) return new Response("telegram failed", { status: 500 });
     }
