@@ -1,0 +1,12 @@
+name = "token-whale-hook"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+# 非敏感变量可直接写这里；敏感的用 wrangler secret put
+[vars]
+TOKEN_ADDRESS = "BCNT4t3rv5Hva8RnUtJUJLnxzeFAabcYp8CghC1SmWin"
+
+# 需要设置的 secrets（部署后执行）：
+#   npx wrangler secret put TELEGRAM_BOT_TOKEN
+#   npx wrangler secret put TELEGRAM_CHAT_ID
+#   npx wrangler secret put WEBHOOK_SECRET   # 随机长字符串，如 openssl rand -hex 24

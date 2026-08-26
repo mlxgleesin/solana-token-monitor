@@ -1,0 +1,45 @@
+name: token-monitor
+
+on:
+  schedule:
+    # 注意：GitHub Actions 的 cron 有排队延迟，实际间隔通常在 5~15 分钟之间浮动。
+    # 需要更实时可迁移到 Cloudflare Workers Cron（免费档最小 1 分钟）。
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # 需要把 state.json 提交回仓库做持久化
+
+concurrency:
+  group: monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install deps
+        run: npm ci || npm install
+
+      - name: Run monitor
+        env:
+          TOKEN_ADDRESS: ${{ secrets.TOKEN_ADDRESS }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BIRDEYE_API_KEY: ${{ secrets.BIRDEYE_API_KEY }}
+        run: npm run monitor
+
+      - name: Persist state
+        run: |
+          git config user.name "monitor-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add state.json || true
+          git diff --cached --quiet || git commit -m "chore: update state [skip ci]"
+          git push || true
