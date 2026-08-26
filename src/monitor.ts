@@ -13,6 +13,7 @@ import { TOKEN_ADDRESS, THRESHOLDS } from "./config.js";
 import { fetchMainPair } from "./dexscreener.js";
 import { fetchHolderCount } from "./birdeye.js";
 import { loadState, saveState, canAlert, markAlerted, latestSampleOlderThan } from "./state.js";
+import { classifyPriceMove } from "./pricemove.js";
 import { sendTelegram } from "./telegram.js";
 
 const fmt = (n: number) =>
@@ -91,6 +92,18 @@ async function main() {
             `1h 买/卖笔数: ${buys}/${sells}，买盘占比 ${(buyRatio * 100).toFixed(0)}%${skewNote}`,
         });
       }
+    }
+  }
+
+  // ---------- 2.5 价格异动（拉盘/砸盘的点火确认） ----------
+  const h1Change = pair.priceChange?.h1;
+  if (typeof h1Change === "number") {
+    const move = classifyPriceMove(h1Change, buyRatio, {
+      priceSpikePct: THRESHOLDS.priceSpikePct,
+      buyRatioSkew: THRESHOLDS.buyRatioSkew,
+    });
+    if (move && canAlert(state, move.key, THRESHOLDS.alertCooldownMinutes, now)) {
+      pending.push({ key: move.key, text: move.text });
     }
   }
 

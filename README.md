@@ -36,6 +36,9 @@ npx wrangler deploy
 npx wrangler secret put TELEGRAM_BOT_TOKEN
 npx wrangler secret put TELEGRAM_CHAT_ID
 npx wrangler secret put WEBHOOK_SECRET   # openssl rand -hex 24 生成
+# 以下两个用于拉取监控名单（弹药到位告警需要，缺省时该告警不生效）
+npx wrangler secret put HELIUS_API_KEY
+npx wrangler secret put HELIUS_WEBHOOK_ID
 ```
 
 记下 Worker 域名，webhook URL 为 `https://<域名>/hook/<WEBHOOK_SECRET>`。
@@ -84,6 +87,9 @@ npx wrangler secret put WEBHOOK_SECRET   # openssl rand -hex 24 生成
 | holder 日增 > 5% | 👥 中 | 真人进场（最难伪造的指标） |
 | top15 名单变动 | 🔄 中 | 庄家分仓/换钱包 |
 | 主池变更 | 🔀 中 | 原主池被撤或有人开二池，LP 基线自动重置 |
+| 大户收到大额 SOL/稳定币 | 💰 中高 | 弹药到位，扫货/拉盘常见前兆（SOL≥50 或稳定币≥$5k） |
+| 1h 涨幅 > 10% | 🚀 高 | 疑似拉盘启动，配合买卖比区分真金白银/对倒自拉 |
+| 1h 跌幅 > 10% | 📉 高 | 疑似砸盘，配合买卖比区分出货/洗盘 |
 
 ## 注意事项
 

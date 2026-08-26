@@ -5,6 +5,8 @@ export interface PairData {
   priceUsd: string;
   liquidity: { usd: number };
   volume: { h24: number; h6: number; h1: number; m5: number };
+  /** 各窗口价格涨跌幅（百分数，如 12.5 = +12.5%） */
+  priceChange?: { m5?: number; h1?: number; h6?: number; h24?: number };
   // 新池子/冷门池子 API 可能缺字段，调用方需兜底
   txns?: {
     h1?: { buys: number; sells: number };

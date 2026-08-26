@@ -15,6 +15,41 @@ export interface Env {
   WEBHOOK_SECRET: string;
   /** 监控的代币 mint 地址 */
   TOKEN_ADDRESS: string;
+  /** 用于拉取 webhook 监控名单（判断资金流入方向），缺省时弹药告警不生效 */
+  HELIUS_API_KEY?: string;
+  HELIUS_WEBHOOK_ID?: string;
+}
+
+// ---------- 弹药信号（大户收到大额资金 = 拉盘/扫货前兆） ----------
+
+/** SOL 入金告警阈值（枚） */
+const SOL_FUNDING_MIN = 50;
+/** 稳定币入金告警阈值（美元） */
+const STABLE_FUNDING_MIN = 5000;
+
+const STABLE_MINTS: Record<string, "USDC" | "USDT"> = {
+  EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: "USDC",
+  Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB: "USDT",
+};
+
+let watchlistCache: { set: Set<string>; ts: number } | null = null;
+
+/** 拉取 Helius webhook 的监控地址名单（10 分钟缓存），失败降级为上次结果/空集 */
+async function fetchWatchlist(env: Env): Promise<Set<string>> {
+  if (!env.HELIUS_API_KEY || !env.HELIUS_WEBHOOK_ID) return new Set();
+  if (watchlistCache && Date.now() - watchlistCache.ts < 10 * 60_000) return watchlistCache.set;
+  try {
+    const res = await fetch(
+      `https://api.helius.xyz/v0/webhooks/${env.HELIUS_WEBHOOK_ID}?api-key=${env.HELIUS_API_KEY}`,
+    );
+    if (!res.ok) return watchlistCache?.set ?? new Set();
+    const data = (await res.json()) as { accountAddresses?: string[] };
+    const set = new Set(data.accountAddresses ?? []);
+    watchlistCache = { set, ts: Date.now() };
+    return set;
+  } catch {
+    return watchlistCache?.set ?? new Set();
+  }
 }
 
 // ---------- 告警富化（失败一律降级为 null，不阻塞告警发送） ----------
@@ -110,6 +145,7 @@ interface HeliusTx {
   type: string;
   timestamp: number;
   tokenTransfers?: TokenTransfer[];
+  nativeTransfers?: { fromUserAccount: string; toUserAccount: string; amount: number }[];
 }
 
 /** 与 src/telegram.ts 的 chunkMessage 保持一致（Worker 独立部署，不共享代码） */
@@ -176,23 +212,55 @@ export default {
       return new Response("bad json", { status: 400 });
     }
 
+    const watchlist = await fetchWatchlist(env);
     const events: TransferEvent[] = [];
     for (const tx of txs) {
       for (const t of tx.tokenTransfers ?? []) {
-        // 只关心被监控代币本身的转移；SOL/USDC 出入也可放开注释一并监控
-        if (env.TOKEN_ADDRESS && t.mint !== env.TOKEN_ADDRESS) continue;
-        events.push({
-          signature: tx.signature,
-          from: t.fromUserAccount,
-          to: t.toUserAccount,
-          amount: t.tokenAmount ?? 0,
-        });
+        const amount = t.tokenAmount ?? 0;
+        if (t.mint === env.TOKEN_ADDRESS) {
+          // 被监控代币本身的转移
+          events.push({
+            signature: tx.signature,
+            from: t.fromUserAccount,
+            to: t.toUserAccount,
+            amount,
+          });
+        } else if (
+          STABLE_MINTS[t.mint] &&
+          watchlist.has(t.toUserAccount) &&
+          amount >= STABLE_FUNDING_MIN
+        ) {
+          // 大户收到大额稳定币 = 弹药到位
+          events.push({
+            signature: tx.signature,
+            from: t.fromUserAccount,
+            to: t.toUserAccount,
+            amount,
+            asset: STABLE_MINTS[t.mint],
+          });
+        }
+      }
+      for (const n of tx.nativeTransfers ?? []) {
+        const sol = (n.amount ?? 0) / 1e9;
+        if (watchlist.has(n.toUserAccount) && sol >= SOL_FUNDING_MIN) {
+          events.push({
+            signature: tx.signature,
+            from: n.fromUserAccount,
+            to: n.toUserAccount,
+            amount: sol,
+            asset: "SOL",
+          });
+        }
       }
     }
 
+    console.log(
+      `sig=${txs[0]?.signature?.slice(0, 16) ?? "?"} events=${events.length} funding=${events.filter((e) => e.asset).length} watchlist=${watchlist.size}`,
+    );
+
     if (events.length) {
       // 富化：价格 + 各发送方当前余额（并发查询，失败降级为省略）
-      const senders = [...new Set(events.map((e) => e.from))];
+      const senders = [...new Set(events.filter((e) => !e.asset).map((e) => e.from))];
       const [priceUsd, ...balances] = await Promise.all([
         fetchPrice(env.TOKEN_ADDRESS),
         ...senders.map((s) => fetchSenderBalance(s, env.TOKEN_ADDRESS)),
@@ -209,6 +277,9 @@ export default {
       // 非 2xx 会让 Helius 重试投递，宁可重复告警也不静默丢失
       if (!ok) return new Response("telegram failed", { status: 500 });
     }
-    return new Response("ok");
+    // 响应体带统计便于排障（Helius 忽略响应体；路径有密钥保护）
+    return new Response(
+      `ok events=${events.length} funding=${events.filter((e) => e.asset).length} watchlist=${watchlist.size}`,
+    );
   },
 };

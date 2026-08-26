@@ -15,6 +15,8 @@ export const THRESHOLDS = {
   buyRatioSkew: 0.2,
   /** holder 日增速超过该比例告警（0.05 = 5%/天） */
   holderGrowthDaily: 0.05,
+  /** 1h 价格涨跌幅告警阈值（百分数，10 = ±10%），配合买卖比给定性分析 */
+  priceSpikePct: 10,
   /** 同类告警冷却时间（分钟），防止刷屏 */
   alertCooldownMinutes: 30,
   /** holder 增速告警冷却时间（分钟），指标本身按日计算，冷却更长 */

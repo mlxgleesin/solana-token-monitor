@@ -9,6 +9,8 @@ export interface TransferEvent {
   from: string;
   to: string;
   amount: number;
+  /** 资金类转账（弹药信号）：SOL / 稳定币；缺省表示被监控代币本身 */
+  asset?: "SOL" | "USDC" | "USDT";
 }
 
 export interface FormatContext {
@@ -44,9 +46,11 @@ export function formatAlerts(events: TransferEvent[], ctx: FormatContext): strin
     return typeof bal === "number" ? `\n转出后余额 ${fmtAmount(bal)} 枚` : "";
   };
 
-  const cex = events.filter((e) => ctx.cexAddresses[e.to]);
-  const burns = events.filter((e) => !ctx.cexAddresses[e.to] && isBurn(e.to));
-  const rest = events.filter((e) => !ctx.cexAddresses[e.to] && !isBurn(e.to));
+  const funding = events.filter((e) => e.asset);
+  const tokenEvents = events.filter((e) => !e.asset);
+  const cex = tokenEvents.filter((e) => ctx.cexAddresses[e.to]);
+  const burns = tokenEvents.filter((e) => !ctx.cexAddresses[e.to] && isBurn(e.to));
+  const rest = tokenEvents.filter((e) => !ctx.cexAddresses[e.to] && !isBurn(e.to));
 
   // 同一发送方多笔转出 → 聚合
   const bySender = new Map<string, TransferEvent[]>();
@@ -60,6 +64,15 @@ export function formatAlerts(events: TransferEvent[], ctx: FormatContext): strin
         `${acct(e.from)} ➜ <b>${ctx.cexAddresses[e.to]}</b>\n` +
         `${fmtAmount(e.amount)} 枚${usd(e.amount)} · ${txLink(e.signature)}` +
         balanceLine(e.from),
+    );
+  }
+
+  for (const e of funding) {
+    blocks.push(
+      `💰 <b>弹药到位 — 大户收到大额资金</b>\n` +
+        `${acct(e.from)} ➜ ${acct(e.to)}\n` +
+        `${fmtAmount(e.amount)} ${e.asset} · ${txLink(e.signature)}\n` +
+        `资金到位常见于扫货/拉盘前，关注该地址后续买入动作`,
     );
   }
 

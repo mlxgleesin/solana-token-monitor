@@ -67,6 +67,35 @@ test("转入销毁地址识别为 🔥", () => {
   assert.ok(msg.includes("销毁"), "销毁说明");
 });
 
+test("大户收到大额 SOL → 💰 弹药到位告警，排在 CEX 之后、普通异动之前", () => {
+  const events = [
+    ev(),
+    ev({
+      from: "SomeFunderCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+      to: "WhaleAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      amount: 120,
+      asset: "SOL",
+      signature: "sigFund",
+    }),
+    ev({ to: "BinanceHotWallet11111111111111111111111111", amount: 5000, signature: "sigCEX" }),
+  ];
+  const msg = formatAlerts(events, { tokenAddress: "MintXYZ", priceUsd: null, cexAddresses: CEX });
+  assert.ok(msg.includes("💰"), "弹药标记");
+  assert.ok(msg.includes("弹药"), "弹药说明");
+  assert.ok(msg.includes("120 SOL"), "SOL 数量带单位");
+  assert.ok(msg.indexOf("🚨🚨") < msg.indexOf("💰"), "CEX 出货告警优先级最高");
+  assert.ok(msg.indexOf("💰") < msg.indexOf("⚠️"), "弹药排在普通异动之前");
+});
+
+test("大户收到大额稳定币 → 💰 告警，金额按美元计", () => {
+  const msg = formatAlerts(
+    [ev({ amount: 25000, asset: "USDC", to: "WhaleAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" })],
+    { tokenAddress: "MintXYZ", priceUsd: null, cexAddresses: {} },
+  );
+  assert.ok(msg.includes("💰"));
+  assert.ok(msg.includes("25,000 USDC"));
+});
+
 test("地址与交易带 Solscan 链接，发送方余额展示", () => {
   const msg = formatAlerts([ev()], {
     tokenAddress: "MintXYZ",
