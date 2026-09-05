@@ -1,5 +1,5 @@
 {
-  "lastLiquidityUsd": 3426099.54,
+  "lastLiquidityUsd": 3437401.39,
   "lastPairAddress": "E8TRsCYBVaB4GD4Nx3F8SGpH3KMYTADR1EkdQC2EJFGK",
   "hourlyVolumes": [
     {
@@ -249,6 +249,10 @@
     {
       "ts": 1788564543424,
       "volH1": 11423.23
+    },
+    {
+      "ts": 1788570904806,
+      "volH1": 498
     }
   ],
   "holderHistory": [
@@ -499,6 +503,10 @@
     {
       "ts": 1788564543424,
       "count": 50438
+    },
+    {
+      "ts": 1788570904806,
+      "count": 50440
     }
   ],
   "lastAlertAt": {
